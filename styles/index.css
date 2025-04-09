@@ -33,3 +33,7 @@ body {
   display: flex;
   gap: 30px;
 }
+code{
+  white-space: pre-wrap;
+  font-size: 15px;
+}

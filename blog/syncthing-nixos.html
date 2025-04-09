@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CalmBookish's nutshell</title>
+    <link rel="stylesheet" href="../styles/index.css">
+</head>
+<body>
+    <h1>Fully declarative Syncthing configuration in Nix OS</h1>
+    <p>
+        To ensure that node has stable ID from one <code>nix-os rebuild switch</code> to another, we have to 
+        configure Syncthing properly. This article is all about this
+    </p>
+    <h1>Install sops-nix</h1>
+    <h3><a href="https://github.com/Mic92/sops-nix/blob/master/README.md">(there's also official documentation)</a></h3>
+    <p>Add the following to your flake.nix:</p>
+    <code>
+{
+    ...
+    inputs = {
+        nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+        <strong>sops-nix.url = "github:Mic92/sops-nix";</strong>
+        ...
+    };
+    
+    outputs = inputs@{ nixpkgs, home-manager, <strong>sops-nix</strong>, ... }: {
+        nixosConfigurations = {
+        nixos = nixpkgs.lib.nixosSystem {
+            system = "x86_64-linux";
+            <strong>specialArgs = { inherit inputs; };</strong>
+            modules = [
+            ./configuration.nix
+            ...
+            ];
+        };
+        };
+    };
+    } 
+    </code>
+    <h1>Generate your <code>age</code> key</h1>
+    <p>Generate <code>age</code> key from a SSH key. If not SSH, follow <code>sops-nix</code> documantation:</p>
+    <code>nix-shell -p ssh-to-age --run "ssh-to-age -private-key -i ~/.ssh/id_ed25519 > ~/.config/sops/age/keys.txt"</code>
+    <p>Then go to your <code>configuration.nix</code> file and import sops-nix module:</p>
+    <code>
+    imports =
+    [
+        ...
+        <b>inputs.sops-nix.nixosModules.sops</b>
+    ];
+    ...
+    sops.defaultSopsFile = ./secrets/secrets.yaml;
+    sops.defaultSopsFormat = "yaml";
+    sops.age.keyFile = "/home/user/.config/sops/age/keys.txt";
+    </code>
+    <p>
+    <h1>Creating .sops.yaml</h1>    
+    Then create <code>.sops.yaml</code> file in your Nix config folder and add the following lines:</p>
+    <code>
+    keys:
+        - &primary YOUR_PUBLIC_KEY
+    creation_rules:
+        - path_regex: secrets/secrets.yaml$
+        key_groups:
+        - age:
+            - *primary 
+    </code>
+    <p>To retrieve public <code>age</code> key, use <code>age-keygen -y ~/.config/sops/age/keys.txt</code></p>
+    <h1>Generating certificate and key for Syncthing</h1>
+    <p>Run <code>nix-shell -p syncthing --run "syncthing generate --config myconfig/"</code>. You will get <code>cert.pem</code> and <code>key.pem</code> files.</p>
+    <h1>Creating secrets.yaml</h1>
+    <p>It should look like this:</p>
+    <code>
+    cert: |
+    -----BEGIN CERTIFICATE-----
+    MIICHDCCAaKgAwIBAgIIcjaikeYgJVcwCgYIKoZIzj0EAwIwSjESMBAGA1UEChMJ
+    U3luY3RoaW5nMSAwHgYDVQQLExdBdXRvbWF0aWNhbGx5IEdlbmVyYXRlZDESMBAG
+    A1UEAxMJc3luY3RoaW5nMB4XDTI1MDQwOTAwMDAwMFoXDTQ1MDQwNDAwMDAwMFow
+    SjESMBAGA1UEChMJU3luY3RoaW5nMSAwHgYDVQQLExdBdXRvbWF0aWNhbGx5IEdl
+    bmVyYXRlZDESMBAGA1UEAxMJc3luY3RoaW5nMHYwEAYHKoZIzj0CAQYFK4EEACID
+    YgAEfRFvMOIvV9PKl06aiwIiyavjiPeYhKO7+/J/l2h66TL7qOXNFCokL0b5imxH
+    lJu2gQeY82rPWJse8W/aGM5wZwS+b5B1CM+/mQzKgeAN3w94pX2CrKXOzpSTNguV
+    aB9io1UwUzAOBgNVHQ8BAf8EBAMCBaAwHQYDVR0lBBYwFAYIKwYBBQUHAwEGCCsG
+    AQUFBwMCMAwGA1UdEwEB/wQCMAAwFAYDVR0RBA0wC4IJc3luY3RoaW5nMAoGCCqG
+    SM49BAMCA2gAMGUCMQDE61oyhXo8E+kBxHJP7++UOrhotUsfzQF3634AFYhYsHh9
+    BtujNLyM8WRO0/J+L7wCMElBPFEToJWxszRcRlMTV87rAbLAFMNp9279of6MKQGI
+    rq68FPmknNtGd7LqhPr0bg==
+    -----END CERTIFICATE-----
+    key: |
+    -----BEGIN EC PRIVATE KEY-----
+    MIGkAgEBBDC8mZwMCH3aQUuYmyPgErDjNf5lmnr06T2QL8mDrTEMu1ezSQUcVBXf
+    JzcmPXrHSo2gBwYFK4EEACKhZANiAAR9EW8w4i9X08qXTpqLAiLJq+OI95iEo7v7
+    8n+XaHrpMvuo5c0UKiQvRvmKbEeUm7aBB5jzas9Ymx7xb9oYznBnBL5vkHUIz7+Z
+    DMqB4A3fD3ilfYKspc7OlJM2C5VoH2I=
+    -----END EC PRIVATE KEY-----
+    </code>
+    <p>Don't forget about <code>|</code></p>
+    <h1>Configuring Syncthing</h1>
+    <p>Create <code>syncthing.nix</code> file or add this lines to your <code>configuration.nix</code></p>
+    <code>
+    { config, lib, pkgs, ... }:
+
+    {
+    <strong>
+    sops = {
+        secrets = {
+        cert.owner = "daniil";
+        key.owner = "daniil";
+        };
+    };
+    </strong>
+    services.syncthing = {
+        enable = true;
+        <strong>key = "/run/secrets/key";</strong>
+        <strong>cert = "/run/secrets/cert";</strong>
+        user = "daniil";
+        dataDir = "/home/daniil";
+        overrideDevices = true;
+        overrideFolders = true;
+        settings = {
+        devices = {
+            "phone" = { id = "YOUR_DEVICE_ID_HERE"; };
+        };
+        folders = {
+            "Org" = {
+            path = "/home/user/org";
+            devices = [ "phone" ];
+            };
+        };
+        };
+        };
+    }
+    </code>
+    <p>Than <code>nixos-rebuild switch</code> and now you have fully declarative Syncthing configuration</p>
+    <script src="https://utteranc.es/client.js"
+        repo="calmbookish/calmbookish.github.io"
+        issue-term="url"
+        label="💬comments"
+        theme="github-light"
+        crossorigin="anonymous"
+        async>
+</script>
+</body>
+</html>
